@@ -69,15 +69,8 @@ jobs:
         run: |
           TAG_NAME="latest"
           gh release delete "$TAG_NAME" --yes --cleanup-tag 2>/dev/null || true
-          cat << 'EOF' > /tmp/release_notes.md
-### Direct File Downloads (No Zip):
-- **TGLitePerf.dylib** (for injecting into .ipa / TrollStore / ESign / Feather / Sideloadly)
-- **com.hrdcoreee.tgliteperf_1.0.0_rootless.deb** (for rootless jailbreak / Dopamine)
-- **com.hrdcoreee.tgliteperf_1.0.0_rootful.deb** (for rootful jailbreak / palera1n)
-EOF
-          gh release create "$TAG_NAME" tweak-artifacts/* \
-            --title "TGLitePerf (Latest Build)" \
-            --notes-file /tmp/release_notes.md
+          printf "### Direct File Downloads (No Zip):\n- **TGLitePerf.dylib** (for injecting into .ipa / TrollStore / ESign / Feather / Sideloadly)\n- **com.hrdcoreee.tgliteperf_1.0.0_rootless.deb** (for rootless jailbreak / Dopamine)\n- **com.hrdcoreee.tgliteperf_1.0.0_rootful.deb** (for rootful jailbreak / palera1n)\n" > /tmp/release_notes.md
+          gh release create "$TAG_NAME" tweak-artifacts/* --title "TGLitePerf (Latest Build)" --notes-file /tmp/release_notes.md
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
