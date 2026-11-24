@@ -4,6 +4,7 @@
 #import <sys/utsname.h>
 
 static NSString * const kKeyTweakEnabled              = @"TGLitePerf_tweakEnabled";
+static NSString * const kKeyDisableAllBlurs          = @"TGLitePerf_disableAllBlurs";
 static NSString * const kKeyDisableBlurAndGlass       = @"TGLitePerf_disableBlurAndGlass";
 static NSString * const kKeyForceLowPower             = @"TGLitePerf_forceLowPowerOptimizations";
 static NSString * const kKeyDisableGalleryLiveCamera  = @"TGLitePerf_disableGalleryLiveCamera";
@@ -15,6 +16,7 @@ static NSString * const kKeyDisableOffscreenShadows   = @"TGLitePerf_disableOffs
 
 @implementation TGLitePerfSettings {
     BOOL _tweakEnabled;
+    BOOL _disableAllBlurs;
     BOOL _disableBlurAndGlass;
     BOOL _forceLowPowerOptimizations;
     BOOL _disableGalleryLiveCamera;
@@ -81,6 +83,7 @@ static NSString * const kKeyDisableOffscreenShadows   = @"TGLitePerf_disableOffs
     NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
     [ud registerDefaults:@{
         kKeyTweakEnabled: @YES,
+        kKeyDisableAllBlurs: @YES,
         kKeyDisableBlurAndGlass: @YES,
         kKeyForceLowPower: @YES,
         kKeyDisableGalleryLiveCamera: @YES,
@@ -92,6 +95,7 @@ static NSString * const kKeyDisableOffscreenShadows   = @"TGLitePerf_disableOffs
     }];
 
     _tweakEnabled = [ud boolForKey:kKeyTweakEnabled];
+    _disableAllBlurs = [ud boolForKey:kKeyDisableAllBlurs];
     _disableBlurAndGlass = [ud boolForKey:kKeyDisableBlurAndGlass];
     _forceLowPowerOptimizations = [ud boolForKey:kKeyForceLowPower];
     _disableGalleryLiveCamera = [ud boolForKey:kKeyDisableGalleryLiveCamera];
@@ -111,13 +115,17 @@ static NSString * const kKeyDisableOffscreenShadows   = @"TGLitePerf_disableOffs
     [ud setBool:_hideGalleryCamera forKey:@"disableGalleryCamera"];
     [ud setBool:_disableSwipeToStoryCamera forKey:@"disableSwipeToRecordStory"];
     [ud setBool:_disableSnapDeletionEffect forKey:@"disableSnapDeletionEffect"];
-    [ud setBool:_disableBlurAndGlass forKey:@"disableGlassEffects"];
+    [ud setBool:(_disableBlurAndGlass || _disableAllBlurs) forKey:@"disableGlassEffects"];
 }
 
 #pragma mark - Fast Getters
 
+- (BOOL)effectiveDisableAllBlurs {
+    return _tweakEnabled && _disableAllBlurs;
+}
+
 - (BOOL)effectiveDisableBlurAndGlass {
-    return _tweakEnabled && _disableBlurAndGlass;
+    return _tweakEnabled && (_disableBlurAndGlass || _disableAllBlurs);
 }
 
 - (BOOL)effectiveLowPowerOptimizations {
@@ -141,6 +149,12 @@ static NSString * const kKeyDisableOffscreenShadows   = @"TGLitePerf_disableOffs
 - (void)setTweakEnabled:(BOOL)value {
     _tweakEnabled = value;
     [[NSUserDefaults standardUserDefaults] setBool:value forKey:kKeyTweakEnabled];
+    [self syncSwiftgramDefaults];
+}
+
+- (void)setDisableAllBlurs:(BOOL)value {
+    _disableAllBlurs = value;
+    [[NSUserDefaults standardUserDefaults] setBool:value forKey:kKeyDisableAllBlurs];
     [self syncSwiftgramDefaults];
 }
 

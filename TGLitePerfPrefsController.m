@@ -3,6 +3,7 @@
 
 typedef NS_ENUM(NSInteger, TGLiteRowType) {
     TGLiteRowMasterEnable = 0,
+    TGLiteRowDisableAllBlurs,
     TGLiteRowDisableBlurAndGlass,
     TGLiteRowForceLowPower,
     TGLiteRowThrottleParticles,
@@ -107,7 +108,7 @@ static UIViewController *TGLiteTopViewController(UIViewController *root) {
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     switch (section) {
         case 0: return 1; // Master toggle
-        case 1: return 4; // Graphics & Animations
+        case 1: return 5; // Graphics & Animations
         case 2: return 4; // Camera & Swiftgram Extras
         case 3: return 1; // Restart button
         default: return 0;
@@ -120,9 +121,10 @@ static UIViewController *TGLiteTopViewController(UIViewController *root) {
             return TGLiteRowMasterEnable;
         case 1:
             switch (indexPath.row) {
-                case 0: return TGLiteRowDisableBlurAndGlass;
-                case 1: return TGLiteRowForceLowPower;
-                case 2: return TGLiteRowThrottleParticles;
+                case 0: return TGLiteRowDisableAllBlurs;
+                case 1: return TGLiteRowDisableBlurAndGlass;
+                case 2: return TGLiteRowForceLowPower;
+                case 3: return TGLiteRowThrottleParticles;
                 default: return TGLiteRowDisableOffscreenShadows;
             }
         case 2:
@@ -196,8 +198,14 @@ static UIViewController *TGLiteTopViewController(UIViewController *root) {
             toggle.on = s.tweakEnabled;
             toggle.enabled = YES;
             break;
+        case TGLiteRowDisableAllBlurs:
+            cell.textLabel.text = [self t:@"Полное отключение блюра (Все размытия -> Flat)" en:@"Disable All Blurs (Flat UI)"];
+            cell.detailTextLabel.text = [self t:@"Отключает UIVisualEffectView (алерты, шторки, меню) и заменяет на плоский цвет" en:@"Replaces all UIVisualEffectViews (alerts, sheets, menus) with flat background"];
+            toggle.on = s.disableAllBlurs;
+            toggle.enabled = enabled;
+            break;
         case TGLiteRowDisableBlurAndGlass:
-            cell.textLabel.text = [self t:@"Отключить блюр и стекло (Flat UI)" en:@"Disable Blur & Glass (Flat UI)"];
+            cell.textLabel.text = [self t:@"Отключить стекло и деформацию (Glass & Mesh)" en:@"Disable Glass & 3D Mesh Effects"];
             cell.detailTextLabel.text = [self t:@"Убирает CABackdropLayer, 3D meshTransform, UIGlassEffect и блюр дат в чате" en:@"Disables CABackdropLayer, 3D meshTransform, UIGlassEffect & chat date blurs"];
             toggle.on = s.disableBlurAndGlass;
             toggle.enabled = enabled;
@@ -259,6 +267,9 @@ static UIViewController *TGLiteTopViewController(UIViewController *root) {
         case TGLiteRowMasterEnable:
             s.tweakEnabled = val;
             [self.tableView reloadData];
+            break;
+        case TGLiteRowDisableAllBlurs:
+            s.disableAllBlurs = val;
             break;
         case TGLiteRowDisableBlurAndGlass:
             s.disableBlurAndGlass = val;

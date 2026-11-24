@@ -22,7 +22,7 @@ static const char *gSelfImageName = NULL;
 static BOOL (*orig_UIAccessibilityIsReduceTransparencyEnabled)(void) = NULL;
 
 static BOOL hooked_UIAccessibilityIsReduceTransparencyEnabled(void) {
-    if ([TGLitePerfSettings shared].effectiveDisableBlurAndGlass) {
+    if ([TGLitePerfSettings shared].effectiveDisableBlurAndGlass || [TGLitePerfSettings shared].effectiveDisableAllBlurs) {
         return YES;
     }
     if (orig_UIAccessibilityIsReduceTransparencyEnabled) {
@@ -73,7 +73,7 @@ static IMP TGLiteSwizzleMethod(Class cls, SEL selector, IMP replacement) {
 
 static void (*orig_CALayer_setValueForKey)(id, SEL, id, NSString *) = NULL;
 static void hooked_CALayer_setValueForKey(CALayer *self, SEL _cmd, id value, NSString *key) {
-    if ([key isEqualToString:@"meshTransform"] && [TGLitePerfSettings shared].effectiveDisableBlurAndGlass) {
+    if ([key isEqualToString:@"meshTransform"] && ([TGLitePerfSettings shared].effectiveDisableBlurAndGlass || [TGLitePerfSettings shared].effectiveDisableAllBlurs)) {
         return;
     }
     orig_CALayer_setValueForKey(self, _cmd, value, key);
@@ -81,7 +81,7 @@ static void hooked_CALayer_setValueForKey(CALayer *self, SEL _cmd, id value, NSS
 
 static void (*orig_CALayer_addAnimationForKey)(id, SEL, CAAnimation *, NSString *) = NULL;
 static void hooked_CALayer_addAnimationForKey(CALayer *self, SEL _cmd, CAAnimation *anim, NSString *key) {
-    if ([key isEqualToString:@"meshTransform"] && [TGLitePerfSettings shared].effectiveDisableBlurAndGlass) {
+    if ([key isEqualToString:@"meshTransform"] && ([TGLitePerfSettings shared].effectiveDisableBlurAndGlass || [TGLitePerfSettings shared].effectiveDisableAllBlurs)) {
         return;
     }
     orig_CALayer_addAnimationForKey(self, _cmd, anim, key);
@@ -90,7 +90,7 @@ static void hooked_CALayer_addAnimationForKey(CALayer *self, SEL _cmd, CAAnimati
 static void (*orig_CALayer_setFilters)(id, SEL, NSArray *) = NULL;
 static void hooked_CALayer_setFilters(CALayer *self, SEL _cmd, NSArray *filters) {
     if (gCABackdropLayerClass && [self isKindOfClass:gCABackdropLayerClass] &&
-        [TGLitePerfSettings shared].effectiveDisableBlurAndGlass) {
+        ([TGLitePerfSettings shared].effectiveDisableBlurAndGlass || [TGLitePerfSettings shared].effectiveDisableAllBlurs)) {
         orig_CALayer_setFilters(self, _cmd, nil);
         return;
     }
@@ -99,7 +99,7 @@ static void hooked_CALayer_setFilters(CALayer *self, SEL _cmd, NSArray *filters)
 
 static void (*orig_CABackdropLayer_setEnabled)(id, SEL, BOOL) = NULL;
 static void hooked_CABackdropLayer_setEnabled(id self, SEL _cmd, BOOL enabled) {
-    if ([TGLitePerfSettings shared].effectiveDisableBlurAndGlass) {
+    if ([TGLitePerfSettings shared].effectiveDisableBlurAndGlass || [TGLitePerfSettings shared].effectiveDisableAllBlurs) {
         orig_CABackdropLayer_setEnabled(self, _cmd, NO);
         return;
     }
@@ -124,9 +124,10 @@ static void hooked_CALayer_setShadowOpacity(CALayer *self, SEL _cmd, float opaci
     orig_CALayer_setShadowOpacity(self, _cmd, opacity);
 }
 
-#pragma mark - UIVisualEffectView (iOS 26+ UIGlassEffect fallback)
+#pragma mark - UIVisualEffectView (Complete Blur Disable & iOS 26+ UIGlassEffect fallback)
 
 static void TGLiteApplyFlatGlassFallback(UIVisualEffectView *view) {
+    if (!view) return;
     BOOL isDark = (view.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark);
     view.backgroundColor = isDark
         ? [UIColor colorWithWhite:0.14 alpha:0.86]
@@ -135,8 +136,9 @@ static void TGLiteApplyFlatGlassFallback(UIVisualEffectView *view) {
 
 static id (*orig_UIVisualEffectView_initWithEffect)(id, SEL, UIVisualEffect *) = NULL;
 static id hooked_UIVisualEffectView_initWithEffect(UIVisualEffectView *self, SEL _cmd, UIVisualEffect *effect) {
+    TGLitePerfSettings *settings = [TGLitePerfSettings shared];
     BOOL isGlass = (gUIGlassEffectClass && effect && [effect isKindOfClass:gUIGlassEffectClass]);
-    if (isGlass && [TGLitePerfSettings shared].effectiveDisableBlurAndGlass) {
+    if (effect && (settings.effectiveDisableAllBlurs || (isGlass && settings.effectiveDisableBlurAndGlass))) {
         UIVisualEffectView *res = orig_UIVisualEffectView_initWithEffect(self, _cmd, nil);
         if (res) {
             TGLiteApplyFlatGlassFallback(res);
@@ -148,13 +150,24 @@ static id hooked_UIVisualEffectView_initWithEffect(UIVisualEffectView *self, SEL
 
 static void (*orig_UIVisualEffectView_setEffect)(id, SEL, UIVisualEffect *) = NULL;
 static void hooked_UIVisualEffectView_setEffect(UIVisualEffectView *self, SEL _cmd, UIVisualEffect *effect) {
+    TGLitePerfSettings *settings = [TGLitePerfSettings shared];
     BOOL isGlass = (gUIGlassEffectClass && effect && [effect isKindOfClass:gUIGlassEffectClass]);
-    if (isGlass && [TGLitePerfSettings shared].effectiveDisableBlurAndGlass) {
+    if (effect && (settings.effectiveDisableAllBlurs || (isGlass && settings.effectiveDisableBlurAndGlass))) {
         orig_UIVisualEffectView_setEffect(self, _cmd, nil);
         TGLiteApplyFlatGlassFallback(self);
         return;
     }
     orig_UIVisualEffectView_setEffect(self, _cmd, effect);
+}
+
+static void (*orig_UIVisualEffectView_traitCollectionDidChange)(id, SEL, UITraitCollection *) = NULL;
+static void hooked_UIVisualEffectView_traitCollectionDidChange(UIVisualEffectView *self, SEL _cmd, UITraitCollection *prev) {
+    if (orig_UIVisualEffectView_traitCollectionDidChange) {
+        orig_UIVisualEffectView_traitCollectionDidChange(self, _cmd, prev);
+    }
+    if ([TGLitePerfSettings shared].effectiveDisableAllBlurs && self.effect == nil && self.backgroundColor != nil) {
+        TGLiteApplyFlatGlassFallback(self);
+    }
 }
 
 #pragma mark - NSProcessInfo (30 FPS Emoji / Low-Power Code Paths)
@@ -400,13 +413,13 @@ static void TGLitePerfInit(void) {
                 gCABackdropLayerClass, NSSelectorFromString(@"setEnabled:"), (IMP)hooked_CABackdropLayer_setEnabled);
         }
 
-        // 3. Swizzle UIVisualEffectView for iOS 26+ UIGlassEffect
-        if (gUIGlassEffectClass) {
-            orig_UIVisualEffectView_initWithEffect = (void *)TGLiteSwizzleMethod(
-                [UIVisualEffectView class], @selector(initWithEffect:), (IMP)hooked_UIVisualEffectView_initWithEffect);
-            orig_UIVisualEffectView_setEffect = (void *)TGLiteSwizzleMethod(
-                [UIVisualEffectView class], @selector(setEffect:), (IMP)hooked_UIVisualEffectView_setEffect);
-        }
+        // 3. Swizzle UIVisualEffectView (for complete blur disable & UIGlassEffect fallback)
+        orig_UIVisualEffectView_initWithEffect = (void *)TGLiteSwizzleMethod(
+            [UIVisualEffectView class], @selector(initWithEffect:), (IMP)hooked_UIVisualEffectView_initWithEffect);
+        orig_UIVisualEffectView_setEffect = (void *)TGLiteSwizzleMethod(
+            [UIVisualEffectView class], @selector(setEffect:), (IMP)hooked_UIVisualEffectView_setEffect);
+        orig_UIVisualEffectView_traitCollectionDidChange = (void *)TGLiteSwizzleMethod(
+            [UIVisualEffectView class], @selector(traitCollectionDidChange:), (IMP)hooked_UIVisualEffectView_traitCollectionDidChange);
 
         // 4. Swizzle NSProcessInfo isLowPowerModeEnabled
         orig_NSProcessInfo_isLowPowerModeEnabled = (void *)TGLiteSwizzleMethod(

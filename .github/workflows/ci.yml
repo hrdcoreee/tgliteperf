@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install toolchain dependencies
         run: |
@@ -61,10 +63,27 @@ jobs:
           curl -fsSL -L "${{ inputs.ipa_url }}" -o /tmp/input.ipa
           ~/.local/bin/cyan -i /tmp/input.ipa -o "$GITHUB_WORKSPACE/tweak-artifacts/Telegram-TGLitePerf.ipa" -f "$GITHUB_WORKSPACE/tweak-artifacts/TGLitePerf.dylib" --overwrite
 
+      - name: Publish Direct Release Files
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="latest"
+          gh release delete "$TAG_NAME" --yes --cleanup-tag 2>/dev/null || true
+          git tag -f "$TAG_NAME"
+          git push -f origin "$TAG_NAME" || true
+          gh release create "$TAG_NAME" tweak-artifacts/* \
+            --title "TGLitePerf (Latest Build)" \
+            --notes "### Direct File Downloads (No Zip):
+- **TGLitePerf.dylib** (for injecting into .ipa / TrollStore / ESign / Feather / Sideloadly)
+- **com.hrdcoreee.tgliteperf_1.0.0_rootless.deb** (for rootless jailbreak / Dopamine)
+- **com.hrdcoreee.tgliteperf_1.0.0_rootful.deb** (for rootful jailbreak / palera1n)
+
+Built automatically on Ubuntu from commit \`${{ github.sha }}\`."
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: TGLitePerf-${{ github.run_number }}
+          name: TGLitePerf-files
           path: tweak-artifacts/*
           if-no-files-found: error
           retention-days: 30
