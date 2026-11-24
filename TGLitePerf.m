@@ -14,10 +14,24 @@
 
 static Class gCABackdropLayerClass = Nil;
 static Class gUIGlassEffectClass = Nil;
+static Class gUIKBBackdropViewClass = Nil;
 static char kTGLiteGesturesAttachedKey;
+static char kTGLiteNeutralizedEffectKey;
 
 static NSString *gMainBundlePath = nil;
 static const char *gSelfImageName = NULL;
+
+static __weak UIResponder *gTGLiteCurrentFirstResponder = nil;
+
+@interface UIResponder (TGLitePerfFirstResponder)
+- (void)tgLite_captureFirstResponder:(id)sender;
+@end
+
+@implementation UIResponder (TGLitePerfFirstResponder)
+- (void)tgLite_captureFirstResponder:(id)sender {
+    gTGLiteCurrentFirstResponder = self;
+}
+@end
 
 static BOOL (*orig_UIAccessibilityIsReduceTransparencyEnabled)(void) = NULL;
 
@@ -87,6 +101,10 @@ static void hooked_CALayer_addAnimationForKey(CALayer *self, SEL _cmd, CAAnimati
     orig_CALayer_addAnimationForKey(self, _cmd, anim, key);
 }
 
+static BOOL TGLiteIsKeyboardView(UIView *view);
+static BOOL TGLiteIsTelegramDarkTheme(UIView *view);
+static UIColor *TGLiteKeyboardColorForDark(BOOL isDark);
+
 static void (*orig_CALayer_setFilters)(id, SEL, NSArray *) = NULL;
 static void hooked_CALayer_setFilters(CALayer *self, SEL _cmd, NSArray *filters) {
     if (gCABackdropLayerClass && [self isKindOfClass:gCABackdropLayerClass] &&
@@ -101,6 +119,16 @@ static void (*orig_CABackdropLayer_setEnabled)(id, SEL, BOOL) = NULL;
 static void hooked_CABackdropLayer_setEnabled(id self, SEL _cmd, BOOL enabled) {
     if ([TGLitePerfSettings shared].effectiveDisableBlurAndGlass || [TGLitePerfSettings shared].effectiveDisableAllBlurs) {
         orig_CABackdropLayer_setEnabled(self, _cmd, NO);
+        if ([NSThread isMainThread] && [self isKindOfClass:[CALayer class]]) {
+            CALayer *layer = (CALayer *)self;
+            id delegate = layer.delegate;
+            if ([delegate isKindOfClass:[UIView class]] && TGLiteIsKeyboardView((UIView *)delegate)) {
+                NSString *clsName = NSStringFromClass([delegate class]);
+                if ([clsName containsString:@"Backdrop"]) {
+                    layer.backgroundColor = TGLiteKeyboardColorForDark(TGLiteIsTelegramDarkTheme((UIView *)delegate)).CGColor;
+                }
+            }
+        }
         return;
     }
     orig_CABackdropLayer_setEnabled(self, _cmd, enabled);
@@ -124,23 +152,207 @@ static void hooked_CALayer_setShadowOpacity(CALayer *self, SEL _cmd, float opaci
     orig_CALayer_setShadowOpacity(self, _cmd, opacity);
 }
 
-#pragma mark - UIVisualEffectView (Complete Blur Disable & iOS 26+ UIGlassEffect fallback)
+#pragma mark - UIVisualEffectView (Complete Blur Disable, Keyboard Theme Fill & iOS 26+ UIGlassEffect fallback)
+
+static void (*orig_UIVisualEffectView_setEffect)(id, SEL, UIVisualEffect *) = NULL;
+static void (*orig_UIVisualEffectView_setBackgroundColor)(id, SEL, UIColor *) = NULL;
+
+static UIWindow *TGLiteFindMainAppWindow(void) {
+    UIWindow *fallback = nil;
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        if (scene.activationState != UISceneActivationStateForegroundActive &&
+            scene.activationState != UISceneActivationStateForegroundInactive) {
+            continue;
+        }
+        UIWindowScene *windowScene = (UIWindowScene *)scene;
+        for (UIWindow *win in windowScene.windows) {
+            if (win.isHidden || !win.rootViewController) continue;
+            NSString *winClass = NSStringFromClass([win class]);
+            if ([winClass containsString:@"Keyboard"] ||
+                [winClass containsString:@"TextEffects"] ||
+                [winClass containsString:@"StatusBar"]) {
+                continue;
+            }
+            if (win.isKeyWindow) {
+                return win;
+            }
+            if (!fallback) {
+                fallback = win;
+            }
+        }
+    }
+    return fallback;
+}
+
+static BOOL TGLiteIsTelegramDarkTheme(UIView *view) {
+    if ([NSThread isMainThread]) {
+        gTGLiteCurrentFirstResponder = nil;
+        [[UIApplication sharedApplication] sendAction:@selector(tgLite_captureFirstResponder:) to:nil from:nil forEvent:nil];
+        UIResponder *responder = gTGLiteCurrentFirstResponder;
+        gTGLiteCurrentFirstResponder = nil;
+        if (responder && [responder respondsToSelector:@selector(keyboardAppearance)]) {
+            UIKeyboardAppearance appearance = [(id<UITextInputTraits>)responder keyboardAppearance];
+            if (appearance == UIKeyboardAppearanceDark) {
+                return YES;
+            }
+            if (appearance == UIKeyboardAppearanceLight) {
+                return NO;
+            }
+        }
+    }
+
+    UIWindow *mainWindow = TGLiteFindMainAppWindow();
+    if (mainWindow) {
+        if (mainWindow.overrideUserInterfaceStyle == UIUserInterfaceStyleDark) {
+            return YES;
+        }
+        if (mainWindow.overrideUserInterfaceStyle == UIUserInterfaceStyleLight) {
+            return NO;
+        }
+        UIViewController *rootVC = mainWindow.rootViewController;
+        if (rootVC) {
+            if (rootVC.overrideUserInterfaceStyle == UIUserInterfaceStyleDark) {
+                return YES;
+            }
+            if (rootVC.overrideUserInterfaceStyle == UIUserInterfaceStyleLight) {
+                return NO;
+            }
+        }
+        if (mainWindow.traitCollection.userInterfaceStyle != UIUserInterfaceStyleUnspecified) {
+            return mainWindow.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark;
+        }
+    }
+
+    if (view) {
+        return view.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark;
+    }
+    return NO;
+}
+
+static UIColor *TGLiteKeyboardColorForDark(BOOL isDark) {
+    if (isDark) {
+        // Classic iOS dark gray keyboard backdrop
+        return [UIColor colorWithRed:40.0/255.0 green:40.0/255.0 blue:42.0/255.0 alpha:1.0];
+    }
+    // Classic iOS light ("white") keyboard backdrop
+    return [UIColor colorWithRed:209.0/255.0 green:212.0/255.0 blue:217.0/255.0 alpha:1.0];
+}
+
+static BOOL TGLiteIsKeyboardView(UIView *view) {
+    if (!view) return NO;
+    if (gUIKBBackdropViewClass && [view isKindOfClass:gUIKBBackdropViewClass]) {
+        return YES;
+    }
+
+    UIWindow *win = view.window;
+    if (win) {
+        NSString *winClass = NSStringFromClass([win class]);
+        if ([winClass containsString:@"RemoteKeyboard"]) {
+            return YES;
+        }
+        if (![winClass containsString:@"Keyboard"] && ![winClass containsString:@"TextEffects"]) {
+            return NO;
+        }
+        UIView *cur = view;
+        for (int i = 0; i < 12 && cur != nil; i++) {
+            NSString *clsName = NSStringFromClass([cur class]);
+            if ([clsName hasPrefix:@"UIKB"] ||
+                [clsName containsString:@"Keyboard"] ||
+                [clsName containsString:@"InputBackdrop"] ||
+                [clsName containsString:@"InputSet"] ||
+                [clsName containsString:@"InputAssistant"] ||
+                [clsName containsString:@"InputWindow"]) {
+                return YES;
+            }
+            cur = cur.superview;
+        }
+        return NO;
+    }
+
+    NSString *clsName = NSStringFromClass([view class]);
+    return [clsName hasPrefix:@"UIKB"] ||
+           [clsName hasPrefix:@"UIKeyboard"] ||
+           [clsName hasPrefix:@"TUI"];
+}
+
+static void TGLiteSetVisualEffectViewBackground(UIVisualEffectView *view, UIColor *color) {
+    if (!view) return;
+    if (orig_UIVisualEffectView_setBackgroundColor) {
+        orig_UIVisualEffectView_setBackgroundColor(view, @selector(setBackgroundColor:), color);
+    } else {
+        view.backgroundColor = color;
+    }
+}
 
 static void TGLiteApplyFlatGlassFallback(UIVisualEffectView *view) {
     if (!view) return;
-    BOOL isDark = (view.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark);
-    view.backgroundColor = isDark
+    if (TGLiteIsKeyboardView(view)) {
+        BOOL isDark = TGLiteIsTelegramDarkTheme(view);
+        TGLiteSetVisualEffectViewBackground(view, TGLiteKeyboardColorForDark(isDark));
+        view.contentView.backgroundColor = [UIColor clearColor];
+        return;
+    }
+
+    BOOL isDark = NO;
+    if (view.window != nil && view.traitCollection.userInterfaceStyle != UIUserInterfaceStyleUnspecified) {
+        isDark = (view.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark);
+    } else {
+        isDark = TGLiteIsTelegramDarkTheme(view);
+    }
+    TGLiteSetVisualEffectViewBackground(view, isDark
         ? [UIColor colorWithWhite:0.14 alpha:0.86]
-        : [UIColor colorWithWhite:0.96 alpha:0.86];
+        : [UIColor colorWithWhite:0.96 alpha:0.86]);
+}
+
+static void TGLiteRefreshKeyboardViewsInTree(UIView *view, UIColor *kbColor, int depth) {
+    if (!view || depth > 12) return;
+    if ([view isKindOfClass:[UIVisualEffectView class]] && TGLiteIsKeyboardView(view)) {
+        UIVisualEffectView *vev = (UIVisualEffectView *)view;
+        if (vev.effect != nil && orig_UIVisualEffectView_setEffect) {
+            orig_UIVisualEffectView_setEffect(vev, @selector(setEffect:), nil);
+        }
+        objc_setAssociatedObject(vev, &kTGLiteNeutralizedEffectKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        TGLiteSetVisualEffectViewBackground(vev, kbColor);
+        vev.contentView.backgroundColor = [UIColor clearColor];
+    }
+    for (UIView *subview in view.subviews) {
+        TGLiteRefreshKeyboardViewsInTree(subview, kbColor, depth + 1);
+    }
+}
+
+static void TGLiteRefreshKeyboardBackdrops(void) {
+    TGLitePerfSettings *settings = [TGLitePerfSettings shared];
+    if (!settings.effectiveDisableAllBlurs && !settings.effectiveDisableBlurAndGlass) {
+        return;
+    }
+    UIColor *kbColor = TGLiteKeyboardColorForDark(TGLiteIsTelegramDarkTheme(nil));
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+        UIWindowScene *windowScene = (UIWindowScene *)scene;
+        for (UIWindow *win in windowScene.windows) {
+            NSString *winClass = NSStringFromClass([win class]);
+            if ([winClass containsString:@"Keyboard"] || [winClass containsString:@"TextEffects"]) {
+                TGLiteRefreshKeyboardViewsInTree(win, kbColor, 0);
+            }
+        }
+    }
 }
 
 static id (*orig_UIVisualEffectView_initWithEffect)(id, SEL, UIVisualEffect *) = NULL;
 static id hooked_UIVisualEffectView_initWithEffect(UIVisualEffectView *self, SEL _cmd, UIVisualEffect *effect) {
     TGLitePerfSettings *settings = [TGLitePerfSettings shared];
+    BOOL isKeyboard = TGLiteIsKeyboardView(self);
     BOOL isGlass = (gUIGlassEffectClass && effect && [effect isKindOfClass:gUIGlassEffectClass]);
-    if (effect && (settings.effectiveDisableAllBlurs || (isGlass && settings.effectiveDisableBlurAndGlass))) {
+    BOOL shouldNeutralize = (effect != nil) && (
+        settings.effectiveDisableAllBlurs ||
+        (isGlass && settings.effectiveDisableBlurAndGlass) ||
+        (isKeyboard && settings.effectiveDisableBlurAndGlass)
+    );
+    if (shouldNeutralize) {
         UIVisualEffectView *res = orig_UIVisualEffectView_initWithEffect(self, _cmd, nil);
         if (res) {
+            objc_setAssociatedObject(res, &kTGLiteNeutralizedEffectKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             TGLiteApplyFlatGlassFallback(res);
         }
         return res;
@@ -148,16 +360,56 @@ static id hooked_UIVisualEffectView_initWithEffect(UIVisualEffectView *self, SEL
     return orig_UIVisualEffectView_initWithEffect(self, _cmd, effect);
 }
 
-static void (*orig_UIVisualEffectView_setEffect)(id, SEL, UIVisualEffect *) = NULL;
 static void hooked_UIVisualEffectView_setEffect(UIVisualEffectView *self, SEL _cmd, UIVisualEffect *effect) {
     TGLitePerfSettings *settings = [TGLitePerfSettings shared];
+    BOOL isKeyboard = TGLiteIsKeyboardView(self);
     BOOL isGlass = (gUIGlassEffectClass && effect && [effect isKindOfClass:gUIGlassEffectClass]);
-    if (effect && (settings.effectiveDisableAllBlurs || (isGlass && settings.effectiveDisableBlurAndGlass))) {
+    BOOL shouldNeutralize = (effect != nil) && (
+        settings.effectiveDisableAllBlurs ||
+        (isGlass && settings.effectiveDisableBlurAndGlass) ||
+        (isKeyboard && settings.effectiveDisableBlurAndGlass)
+    );
+    if (shouldNeutralize) {
         orig_UIVisualEffectView_setEffect(self, _cmd, nil);
+        objc_setAssociatedObject(self, &kTGLiteNeutralizedEffectKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         TGLiteApplyFlatGlassFallback(self);
         return;
     }
     orig_UIVisualEffectView_setEffect(self, _cmd, effect);
+}
+
+static void hooked_UIVisualEffectView_setBackgroundColor(UIVisualEffectView *self, SEL _cmd, UIColor *color) {
+    TGLitePerfSettings *settings = [TGLitePerfSettings shared];
+    if ((settings.effectiveDisableAllBlurs || settings.effectiveDisableBlurAndGlass) &&
+        TGLiteIsKeyboardView(self)) {
+        UIColor *kbColor = TGLiteKeyboardColorForDark(TGLiteIsTelegramDarkTheme(self));
+        orig_UIVisualEffectView_setBackgroundColor(self, _cmd, kbColor);
+        return;
+    }
+    orig_UIVisualEffectView_setBackgroundColor(self, _cmd, color);
+}
+
+static void (*orig_UIVisualEffectView_didMoveToWindow)(id, SEL) = NULL;
+static void hooked_UIVisualEffectView_didMoveToWindow(UIVisualEffectView *self, SEL _cmd) {
+    if (orig_UIVisualEffectView_didMoveToWindow) {
+        orig_UIVisualEffectView_didMoveToWindow(self, _cmd);
+    }
+    if (!self.window) {
+        return;
+    }
+    TGLitePerfSettings *settings = [TGLitePerfSettings shared];
+    BOOL blurDisabled = settings.effectiveDisableAllBlurs || settings.effectiveDisableBlurAndGlass;
+    if (blurDisabled && TGLiteIsKeyboardView(self)) {
+        if (self.effect != nil && orig_UIVisualEffectView_setEffect) {
+            orig_UIVisualEffectView_setEffect(self, @selector(setEffect:), nil);
+        }
+        objc_setAssociatedObject(self, &kTGLiteNeutralizedEffectKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        TGLiteApplyFlatGlassFallback(self);
+    } else if (settings.effectiveDisableAllBlurs &&
+               objc_getAssociatedObject(self, &kTGLiteNeutralizedEffectKey) &&
+               self.effect == nil) {
+        TGLiteApplyFlatGlassFallback(self);
+    }
 }
 
 static void (*orig_UIVisualEffectView_traitCollectionDidChange)(id, SEL, UITraitCollection *) = NULL;
@@ -165,7 +417,46 @@ static void hooked_UIVisualEffectView_traitCollectionDidChange(UIVisualEffectVie
     if (orig_UIVisualEffectView_traitCollectionDidChange) {
         orig_UIVisualEffectView_traitCollectionDidChange(self, _cmd, prev);
     }
-    if ([TGLitePerfSettings shared].effectiveDisableAllBlurs && self.effect == nil && self.backgroundColor != nil) {
+    TGLitePerfSettings *settings = [TGLitePerfSettings shared];
+    BOOL blurDisabled = settings.effectiveDisableAllBlurs || settings.effectiveDisableBlurAndGlass;
+    if (blurDisabled && TGLiteIsKeyboardView(self)) {
+        if (self.effect != nil && orig_UIVisualEffectView_setEffect) {
+            orig_UIVisualEffectView_setEffect(self, @selector(setEffect:), nil);
+        }
+        objc_setAssociatedObject(self, &kTGLiteNeutralizedEffectKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        TGLiteApplyFlatGlassFallback(self);
+    } else if (settings.effectiveDisableAllBlurs &&
+               objc_getAssociatedObject(self, &kTGLiteNeutralizedEffectKey) &&
+               self.effect == nil) {
+        TGLiteApplyFlatGlassFallback(self);
+    }
+}
+
+static void (*orig_UIKBBackdropView_transitionToStyle)(id, SEL, NSInteger) = NULL;
+static void hooked_UIKBBackdropView_transitionToStyle(UIVisualEffectView *self, SEL _cmd, NSInteger style) {
+    if (orig_UIKBBackdropView_transitionToStyle) {
+        orig_UIKBBackdropView_transitionToStyle(self, _cmd, style);
+    }
+    TGLitePerfSettings *settings = [TGLitePerfSettings shared];
+    if (settings.effectiveDisableAllBlurs || settings.effectiveDisableBlurAndGlass) {
+        if (self.effect != nil && orig_UIVisualEffectView_setEffect) {
+            orig_UIVisualEffectView_setEffect(self, @selector(setEffect:), nil);
+        }
+        objc_setAssociatedObject(self, &kTGLiteNeutralizedEffectKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        TGLiteApplyFlatGlassFallback(self);
+    }
+}
+
+static void (*orig_UIKBBackdropView_layoutSubviews)(id, SEL) = NULL;
+static void hooked_UIKBBackdropView_layoutSubviews(UIVisualEffectView *self, SEL _cmd) {
+    if (orig_UIKBBackdropView_layoutSubviews) {
+        orig_UIKBBackdropView_layoutSubviews(self, _cmd);
+    }
+    TGLitePerfSettings *settings = [TGLitePerfSettings shared];
+    if (settings.effectiveDisableAllBlurs || settings.effectiveDisableBlurAndGlass) {
+        if (self.effect != nil && orig_UIVisualEffectView_setEffect) {
+            orig_UIVisualEffectView_setEffect(self, @selector(setEffect:), nil);
+        }
         TGLiteApplyFlatGlassFallback(self);
     }
 }
@@ -388,6 +679,7 @@ static void TGLitePerfInit(void) {
 
         gCABackdropLayerClass = NSClassFromString(@"CABackdropLayer");
         gUIGlassEffectClass = NSClassFromString(@"UIGlassEffect");
+        gUIKBBackdropViewClass = NSClassFromString(@"UIKBBackdropView");
 
         gMainBundlePath = [[NSBundle mainBundle].bundlePath stringByResolvingSymlinksInPath];
         Dl_info selfInfo;
@@ -413,13 +705,42 @@ static void TGLitePerfInit(void) {
                 gCABackdropLayerClass, NSSelectorFromString(@"setEnabled:"), (IMP)hooked_CABackdropLayer_setEnabled);
         }
 
-        // 3. Swizzle UIVisualEffectView (for complete blur disable & UIGlassEffect fallback)
+        // 3. Swizzle UIVisualEffectView & UIKBBackdropView (flat fallback & Telegram-themed solid keyboard)
         orig_UIVisualEffectView_initWithEffect = (void *)TGLiteSwizzleMethod(
             [UIVisualEffectView class], @selector(initWithEffect:), (IMP)hooked_UIVisualEffectView_initWithEffect);
         orig_UIVisualEffectView_setEffect = (void *)TGLiteSwizzleMethod(
             [UIVisualEffectView class], @selector(setEffect:), (IMP)hooked_UIVisualEffectView_setEffect);
+        orig_UIVisualEffectView_setBackgroundColor = (void *)TGLiteSwizzleMethod(
+            [UIVisualEffectView class], @selector(setBackgroundColor:), (IMP)hooked_UIVisualEffectView_setBackgroundColor);
+        orig_UIVisualEffectView_didMoveToWindow = (void *)TGLiteSwizzleMethod(
+            [UIVisualEffectView class], @selector(didMoveToWindow), (IMP)hooked_UIVisualEffectView_didMoveToWindow);
         orig_UIVisualEffectView_traitCollectionDidChange = (void *)TGLiteSwizzleMethod(
             [UIVisualEffectView class], @selector(traitCollectionDidChange:), (IMP)hooked_UIVisualEffectView_traitCollectionDidChange);
+
+        if (gUIKBBackdropViewClass) {
+            orig_UIKBBackdropView_transitionToStyle = (void *)TGLiteSwizzleMethod(
+                gUIKBBackdropViewClass, NSSelectorFromString(@"transitionToStyle:"), (IMP)hooked_UIKBBackdropView_transitionToStyle);
+            orig_UIKBBackdropView_layoutSubviews = (void *)TGLiteSwizzleMethod(
+                gUIKBBackdropViewClass, @selector(layoutSubviews), (IMP)hooked_UIKBBackdropView_layoutSubviews);
+        }
+
+        void (^refreshKeyboard)(NSNotification *) = ^(NSNotification *note) {
+            if ([NSThread isMainThread]) {
+                TGLiteRefreshKeyboardBackdrops();
+            } else {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    TGLiteRefreshKeyboardBackdrops();
+                });
+            }
+        };
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIKeyboardWillShowNotification
+                                                          object:nil
+                                                           queue:nil
+                                                      usingBlock:refreshKeyboard];
+        [[NSNotificationCenter defaultCenter] addObserverForName:UIKeyboardDidShowNotification
+                                                          object:nil
+                                                           queue:nil
+                                                      usingBlock:refreshKeyboard];
 
         // 4. Swizzle NSProcessInfo isLowPowerModeEnabled
         orig_NSProcessInfo_isLowPowerModeEnabled = (void *)TGLiteSwizzleMethod(
