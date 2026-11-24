@@ -12,6 +12,7 @@ typedef NS_ENUM(NSInteger, TGLiteRowType) {
     TGLiteRowHideGalleryCamera,
     TGLiteRowDisableSwipeToStory,
     TGLiteRowDisableSnapDeletion,
+    TGLiteRowDisableUpdateChecks,
     TGLiteRowRestartApp
 };
 
@@ -109,7 +110,7 @@ static UIViewController *TGLiteTopViewController(UIViewController *root) {
     switch (section) {
         case 0: return 1; // Master toggle
         case 1: return 5; // Graphics & Animations
-        case 2: return 4; // Camera & Swiftgram Extras
+        case 2: return 5; // Camera, Swiftgram Extras & Updates
         case 3: return 1; // Restart button
         default: return 0;
     }
@@ -132,7 +133,8 @@ static UIViewController *TGLiteTopViewController(UIViewController *root) {
                 case 0: return TGLiteRowDisableGalleryLiveCamera;
                 case 1: return TGLiteRowHideGalleryCamera;
                 case 2: return TGLiteRowDisableSwipeToStory;
-                default: return TGLiteRowDisableSnapDeletion;
+                case 3: return TGLiteRowDisableSnapDeletion;
+                default: return TGLiteRowDisableUpdateChecks;
             }
         default:
             return TGLiteRowRestartApp;
@@ -252,6 +254,12 @@ static UIViewController *TGLiteTopViewController(UIViewController *root) {
             toggle.on = s.disableSnapDeletionEffect;
             toggle.enabled = enabled;
             break;
+        case TGLiteRowDisableUpdateChecks:
+            cell.textLabel.text = [self t:@"Отключить проверку обновлений" en:@"Disable App Update Prompts"];
+            cell.detailTextLabel.text = [self t:@"Скрывает окно обновления при входе и баннер в списке чатов (не затрагивает сообщения в чатах)" en:@"Hides launch update sheets and top chat list update banners (keeps in-chat messages)"];
+            toggle.on = s.disableUpdateChecks;
+            toggle.enabled = enabled;
+            break;
         default:
             break;
     }
@@ -294,6 +302,9 @@ static UIViewController *TGLiteTopViewController(UIViewController *root) {
             break;
         case TGLiteRowDisableSnapDeletion:
             s.disableSnapDeletionEffect = val;
+            break;
+        case TGLiteRowDisableUpdateChecks:
+            s.disableUpdateChecks = val;
             break;
         default:
             break;

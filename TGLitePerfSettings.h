@@ -16,6 +16,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) BOOL disableSnapDeletionEffect;
 @property (nonatomic, assign) BOOL throttleParticles;
 @property (nonatomic, assign) BOOL disableOffscreenShadows;
+@property (nonatomic, assign) BOOL disableUpdateChecks;
 
 @property (nonatomic, readonly) BOOL isOlderDeviceDetected;
 @property (nonatomic, readonly) NSString *deviceSummary;
@@ -27,6 +28,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)effectiveDisableGalleryLiveCamera;
 - (BOOL)effectiveThrottleParticles;
 - (BOOL)effectiveDisableOffscreenShadows;
+- (BOOL)effectiveDisableUpdateChecks;
 
 - (void)syncSwiftgramDefaults;
 

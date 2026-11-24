@@ -768,6 +768,242 @@ static void hooked_AVCaptureVideoPreviewLayer_layoutSublayers(AVCaptureVideoPrev
     }
 }
 
+#pragma mark - Disable App Update Checks & Top Chat List Update Banners
+
+@interface TGLiteSGUpdateURLProtocol : NSURLProtocol
+@end
+
+@implementation TGLiteSGUpdateURLProtocol
+
++ (BOOL)TGLiteIsSwiftgramGitHubSettingsURL:(NSURL *)url {
+    if (!url) return NO;
+    NSString *host = url.host.lowercaseString;
+    NSString *path = url.path;
+    return [host isEqualToString:@"raw.githubusercontent.com"] &&
+           [path hasPrefix:@"/Swiftgram/settings/"];
+}
+
++ (BOOL)canInitWithRequest:(NSURLRequest *)request {
+    if (![TGLitePerfSettings shared].effectiveDisableUpdateChecks) {
+        return NO;
+    }
+    if ([NSURLProtocol propertyForKey:@"TGLiteSGHandled" inRequest:request]) {
+        return NO;
+    }
+    return [self TGLiteIsSwiftgramGitHubSettingsURL:request.URL];
+}
+
++ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request {
+    return request;
+}
+
+- (void)startLoading {
+    NSData *body = [@"{\"announcements_data\":null}" dataUsingEncoding:NSUTF8StringEncoding];
+    NSHTTPURLResponse *resp = [[NSHTTPURLResponse alloc] initWithURL:self.request.URL
+                                                          statusCode:200
+                                                         HTTPVersion:@"HTTP/1.1"
+                                                        headerFields:@{
+        @"Content-Type": @"application/json",
+        @"Content-Length": [NSString stringWithFormat:@"%lu", (unsigned long)body.length]
+    }];
+    [self.client URLProtocol:self didReceiveResponse:resp cacheStoragePolicy:NSURLCacheStorageNotAllowed];
+    [self.client URLProtocol:self didLoadData:body];
+    [self.client URLProtocolDidFinishLoading:self];
+}
+
+- (void)stopLoading {
+}
+
+@end
+
+static BOOL TGLiteIsSwiftgramAPISettingsURL(NSURL *url) {
+    if (!url) return NO;
+    NSString *host = url.host.lowercaseString;
+    NSString *path = url.path;
+    return [host containsString:@"swiftgram"] && [path hasSuffix:@"/settings"];
+}
+
+static NSData *TGLiteStripAnnouncementsFromWebSettingsData(NSData *data) {
+    if (!data || data.length == 0) return data;
+    id json = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:nil];
+    if (![json isKindOfClass:[NSMutableDictionary class]]) {
+        return data;
+    }
+    NSMutableDictionary *dict = (NSMutableDictionary *)json;
+    id globalObj = dict[@"global"];
+    if ([globalObj isKindOfClass:[NSMutableDictionary class]]) {
+        NSMutableDictionary *globalDict = (NSMutableDictionary *)globalObj;
+        if (globalDict[@"announcements_data"] && globalDict[@"announcements_data"] != [NSNull null]) {
+            globalDict[@"announcements_data"] = [NSNull null];
+            NSData *updated = [NSJSONSerialization dataWithJSONObject:dict options:0 error:nil];
+            if (updated) {
+                return updated;
+            }
+        }
+    }
+    return data;
+}
+
+typedef void (^TGLiteURLSessionCompletion)(NSData * _Nullable, NSURLResponse * _Nullable, NSError * _Nullable);
+
+static NSURLSessionDataTask * (*orig_NSURLSession_dataTaskWithRequestCompletion)(id, SEL, NSURLRequest *, TGLiteURLSessionCompletion) = NULL;
+static NSURLSessionDataTask *hooked_NSURLSession_dataTaskWithRequestCompletion(NSURLSession *self, SEL _cmd, NSURLRequest *request, TGLiteURLSessionCompletion completionHandler) {
+    if (completionHandler && [TGLitePerfSettings shared].effectiveDisableUpdateChecks &&
+        TGLiteIsSwiftgramAPISettingsURL(request.URL)) {
+        TGLiteURLSessionCompletion wrapped = ^(NSData *data, NSURLResponse *response, NSError *error) {
+            NSData *filtered = data ? TGLiteStripAnnouncementsFromWebSettingsData(data) : nil;
+            completionHandler(filtered, response, error);
+        };
+        return orig_NSURLSession_dataTaskWithRequestCompletion(self, _cmd, request, wrapped);
+    }
+    return orig_NSURLSession_dataTaskWithRequestCompletion(self, _cmd, request, completionHandler);
+}
+
+static NSURLSessionDataTask * (*orig_NSURLSession_dataTaskWithURLCompletion)(id, SEL, NSURL *, TGLiteURLSessionCompletion) = NULL;
+static NSURLSessionDataTask *hooked_NSURLSession_dataTaskWithURLCompletion(NSURLSession *self, SEL _cmd, NSURL *url, TGLiteURLSessionCompletion completionHandler) {
+    if (completionHandler && [TGLitePerfSettings shared].effectiveDisableUpdateChecks &&
+        TGLiteIsSwiftgramAPISettingsURL(url)) {
+        TGLiteURLSessionCompletion wrapped = ^(NSData *data, NSURLResponse *response, NSError *error) {
+            NSData *filtered = data ? TGLiteStripAnnouncementsFromWebSettingsData(data) : nil;
+            completionHandler(filtered, response, error);
+        };
+        return orig_NSURLSession_dataTaskWithURLCompletion(self, _cmd, url, wrapped);
+    }
+    return orig_NSURLSession_dataTaskWithURLCompletion(self, _cmd, url, completionHandler);
+}
+
+static BOOL TGLiteIsUpdateInfoController(UIViewController *vc) {
+    if (!vc) return NO;
+    return [NSStringFromClass([vc class]) containsString:@"UpdateInfoController"];
+}
+
+static void (*orig_UIViewController_viewWillAppear)(id, SEL, BOOL) = NULL;
+static void hooked_UIViewController_viewWillAppear(UIViewController *self, SEL _cmd, BOOL animated) {
+    if ([TGLitePerfSettings shared].effectiveDisableUpdateChecks && TGLiteIsUpdateInfoController(self)) {
+        self.view.hidden = YES;
+        self.view.alpha = 0.0;
+    }
+    if (orig_UIViewController_viewWillAppear) {
+        orig_UIViewController_viewWillAppear(self, _cmd, animated);
+    }
+}
+
+static void (*orig_UIViewController_viewDidAppear)(id, SEL, BOOL) = NULL;
+static void hooked_UIViewController_viewDidAppear(UIViewController *self, SEL _cmd, BOOL animated) {
+    BOOL suppress = ([TGLitePerfSettings shared].effectiveDisableUpdateChecks && TGLiteIsUpdateInfoController(self));
+    if (suppress) {
+        self.view.hidden = YES;
+        self.view.alpha = 0.0;
+    }
+    if (orig_UIViewController_viewDidAppear) {
+        orig_UIViewController_viewDidAppear(self, _cmd, animated);
+    }
+    if (suppress) {
+        [self dismissViewControllerAnimated:NO completion:nil];
+    }
+}
+
+static BOOL TGLiteIsUpdateNoticeText(NSString *combined) {
+    if (!combined || combined.length == 0) return NO;
+    NSString *lower = combined.lowercaseString;
+    NSArray<NSString *> *excluded = @[
+        @"password", @"парол", @"login", @"вход", @"session", @"сесси",
+        @"freeze", @"frozen", @"заморож", @"storage", @"памят", @"кэш", @"cache",
+        @"bot", @"бот", @"photo", @"фото", @"birthday", @"рождени",
+        @"stars", @"звёзд", @"звезд", @"premium", @"премиум", @"passkey", @"email", @"почт"
+    ];
+    for (NSString *kw in excluded) {
+        if ([lower containsString:kw]) {
+            return NO;
+        }
+    }
+    NSArray<NSString *> *updateKeywords = @[
+        @"update", @"new version", @"outdated", @"обнови", @"обновлени",
+        @"новая версия", @"устарел", @"актуальн"
+    ];
+    for (NSString *kw in updateKeywords) {
+        if ([lower containsString:kw]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+static void (*orig_ChatListHeaderNoticeView_layoutSubviews)(id, SEL) = NULL;
+static void hooked_ChatListHeaderNoticeView_layoutSubviews(UIView *self, SEL _cmd) {
+    if (orig_ChatListHeaderNoticeView_layoutSubviews) {
+        orig_ChatListHeaderNoticeView_layoutSubviews(self, _cmd);
+    }
+    if (![TGLitePerfSettings shared].effectiveDisableUpdateChecks) {
+        return;
+    }
+    NSMutableString *combined = [NSMutableString string];
+    for (id elem in self.accessibilityElements) {
+        if ([elem respondsToSelector:@selector(accessibilityLabel)]) {
+            NSString *lbl = [elem accessibilityLabel];
+            if (lbl.length > 0) {
+                [combined appendString:lbl];
+                [combined appendString:@" "];
+            }
+        }
+        if ([elem respondsToSelector:@selector(accessibilityValue)]) {
+            NSString *val = [elem accessibilityValue];
+            if (val.length > 0) {
+                [combined appendString:val];
+                [combined appendString:@" "];
+            }
+        }
+    }
+    if (TGLiteIsUpdateNoticeText(combined)) {
+        self.hidden = YES;
+        self.alpha = 0.0;
+        UIView *panelView = self.subviews.firstObject;
+        if (panelView) {
+            SEL nodeSel = NSSelectorFromString(@"asyncdisplaykit_node");
+            Method nodeMethod = class_getInstanceMethod([panelView class], nodeSel);
+            if (nodeMethod) {
+                id node = ((id (*)(id, SEL))method_getImplementation(nodeMethod))(panelView, nodeSel);
+                SEL closeSel = NSSelectorFromString(@"closePressed");
+                Method closeMethod = node ? class_getInstanceMethod([node class], closeSel) : NULL;
+                if (closeMethod) {
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        ((void (*)(id, SEL))method_getImplementation(closeMethod))(node, closeSel);
+                    });
+                }
+            }
+        }
+    } else {
+        if (self.isHidden) {
+            self.hidden = NO;
+        }
+        if (self.alpha < 1.0) {
+            self.alpha = 1.0;
+        }
+    }
+}
+
+static void TGLiteInstallChatListNoticeHookOnce(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        unsigned int count = 0;
+        Class *classes = objc_copyClassList(&count);
+        if (!classes) return;
+        for (unsigned int i = 0; i < count; i++) {
+            Class cls = classes[i];
+            const char *name = class_getName(cls);
+            if (!name) continue;
+            if (strstr(name, "ChatListHeaderNoticeComponent") && strstr(name, "View")) {
+                if (class_getSuperclass(cls) == [UIView class]) {
+                    orig_ChatListHeaderNoticeView_layoutSubviews = (void *)TGLiteSwizzleMethod(
+                        cls, @selector(layoutSubviews), (IMP)hooked_ChatListHeaderNoticeView_layoutSubviews);
+                    break;
+                }
+            }
+        }
+        free(classes);
+    });
+}
+
 #pragma mark - Settings Gesture & Onboarding Toast
 
 @interface TGLiteGestureDelegate : NSObject <UIGestureRecognizerDelegate>
@@ -828,6 +1064,7 @@ static void hooked_AVCaptureVideoPreviewLayer_layoutSublayers(AVCaptureVideoPrev
     if ([winClass containsString:@"Keyboard"] || [winClass containsString:@"StatusBar"] || [winClass containsString:@"TextEffects"]) {
         return;
     }
+    TGLiteInstallChatListNoticeHookOnce();
     objc_setAssociatedObject(window, &kTGLiteGesturesAttachedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     UITapGestureRecognizer *twoFingerTripleTap = [[UITapGestureRecognizer alloc]
@@ -1036,5 +1273,28 @@ static void TGLitePerfInit(void) {
             [UIWindow class], @selector(makeKeyAndVisible), (IMP)hooked_UIWindow_makeKeyAndVisible);
         orig_UIWindow_becomeKeyWindow = (void *)TGLiteSwizzleMethod(
             [UIWindow class], @selector(becomeKeyWindow), (IMP)hooked_UIWindow_becomeKeyWindow);
+
+        // 8. Disable app update checks & top chat list update banners
+        [NSURLProtocol registerClass:[TGLiteSGUpdateURLProtocol class]];
+
+        Class sharedSessionClass = [NSURLSession sharedSession].class ?: [NSURLSession class];
+        Class reqSessionClass = (class_getInstanceMethod(sharedSessionClass, @selector(dataTaskWithRequest:completionHandler:)) !=
+                                 class_getInstanceMethod([NSURLSession class], @selector(dataTaskWithRequest:completionHandler:)))
+            ? sharedSessionClass
+            : [NSURLSession class];
+        orig_NSURLSession_dataTaskWithRequestCompletion = (void *)TGLiteSwizzleMethod(
+            reqSessionClass, @selector(dataTaskWithRequest:completionHandler:), (IMP)hooked_NSURLSession_dataTaskWithRequestCompletion);
+
+        Class urlSessionClass = (class_getInstanceMethod(sharedSessionClass, @selector(dataTaskWithURL:completionHandler:)) !=
+                                 class_getInstanceMethod([NSURLSession class], @selector(dataTaskWithURL:completionHandler:)))
+            ? sharedSessionClass
+            : [NSURLSession class];
+        orig_NSURLSession_dataTaskWithURLCompletion = (void *)TGLiteSwizzleMethod(
+            urlSessionClass, @selector(dataTaskWithURL:completionHandler:), (IMP)hooked_NSURLSession_dataTaskWithURLCompletion);
+
+        orig_UIViewController_viewWillAppear = (void *)TGLiteSwizzleMethod(
+            [UIViewController class], @selector(viewWillAppear:), (IMP)hooked_UIViewController_viewWillAppear);
+        orig_UIViewController_viewDidAppear = (void *)TGLiteSwizzleMethod(
+            [UIViewController class], @selector(viewDidAppear:), (IMP)hooked_UIViewController_viewDidAppear);
     }
 }

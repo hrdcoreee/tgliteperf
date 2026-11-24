@@ -13,6 +13,7 @@ static NSString * const kKeyDisableSwipeToStory       = @"TGLitePerf_disableSwip
 static NSString * const kKeyDisableSnapDeletion       = @"TGLitePerf_disableSnapDeletionEffect";
 static NSString * const kKeyThrottleParticles         = @"TGLitePerf_throttleParticles";
 static NSString * const kKeyDisableOffscreenShadows   = @"TGLitePerf_disableOffscreenShadows";
+static NSString * const kKeyDisableUpdateChecks       = @"TGLitePerf_disableUpdateChecks";
 
 @implementation TGLitePerfSettings {
     BOOL _tweakEnabled;
@@ -25,6 +26,7 @@ static NSString * const kKeyDisableOffscreenShadows   = @"TGLitePerf_disableOffs
     BOOL _disableSnapDeletionEffect;
     BOOL _throttleParticles;
     BOOL _disableOffscreenShadows;
+    BOOL _disableUpdateChecks;
 
     BOOL _isOlderDeviceDetected;
     NSString *_deviceSummary;
@@ -92,6 +94,7 @@ static NSString * const kKeyDisableOffscreenShadows   = @"TGLitePerf_disableOffs
         kKeyDisableSnapDeletion: @YES,
         kKeyThrottleParticles: @YES,
         kKeyDisableOffscreenShadows: @YES,
+        kKeyDisableUpdateChecks: @YES,
     }];
 
     _tweakEnabled = [ud boolForKey:kKeyTweakEnabled];
@@ -104,6 +107,7 @@ static NSString * const kKeyDisableOffscreenShadows   = @"TGLitePerf_disableOffs
     _disableSnapDeletionEffect = [ud boolForKey:kKeyDisableSnapDeletion];
     _throttleParticles = [ud boolForKey:kKeyThrottleParticles];
     _disableOffscreenShadows = [ud boolForKey:kKeyDisableOffscreenShadows];
+    _disableUpdateChecks = [ud boolForKey:kKeyDisableUpdateChecks];
 }
 
 - (void)syncSwiftgramDefaults {
@@ -142,6 +146,10 @@ static NSString * const kKeyDisableOffscreenShadows   = @"TGLitePerf_disableOffs
 
 - (BOOL)effectiveDisableOffscreenShadows {
     return _tweakEnabled && _disableOffscreenShadows;
+}
+
+- (BOOL)effectiveDisableUpdateChecks {
+    return _tweakEnabled && _disableUpdateChecks;
 }
 
 #pragma mark - Setters
@@ -201,6 +209,11 @@ static NSString * const kKeyDisableOffscreenShadows   = @"TGLitePerf_disableOffs
 - (void)setDisableOffscreenShadows:(BOOL)value {
     _disableOffscreenShadows = value;
     [[NSUserDefaults standardUserDefaults] setBool:value forKey:kKeyDisableOffscreenShadows];
+}
+
+- (void)setDisableUpdateChecks:(BOOL)value {
+    _disableUpdateChecks = value;
+    [[NSUserDefaults standardUserDefaults] setBool:value forKey:kKeyDisableUpdateChecks];
 }
 
 @end
