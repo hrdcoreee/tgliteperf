@@ -1,0 +1,14 @@
+{
+    Filter = {
+        Bundles = (
+            "ph.telegra.Telegraph",
+            "app.swiftgram.ios",
+            "app.swiftgram.ios.beta",
+            "app.swiftgram.ios.dev"
+        );
+        Executables = (
+            "Telegram",
+            "Swiftgram"
+        );
+    };
+}

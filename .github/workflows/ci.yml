@@ -1,0 +1,70 @@
+name: Build TGLitePerf
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      ipa_url:
+        description: 'Optional direct URL to Telegram/Swiftgram .ipa to inject TGLitePerf.dylib into'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install toolchain dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm dpkg xz-utils curl python3 python3-pip zip
+
+      - name: Cache iOS SDK & ldid
+        id: cache-sdk
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/ios-toolchain
+          key: ios-sdk-16.5-ldid-procursus8
+
+      - name: Download iOS SDK & ldid
+        if: steps.cache-sdk.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /tmp/ios-toolchain/bin
+          curl -fsSL -L "https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS16.5.sdk.tar.xz" -o /tmp/sdk.tar.xz
+          tar -xf /tmp/sdk.tar.xz -C /tmp/ios-toolchain
+          rm /tmp/sdk.tar.xz
+          curl -fsSL -L "https://github.com/ProcursusTeam/ldid/releases/download/v2.1.5-procursus8/ldid_linux_x86_64" -o /tmp/ios-toolchain/bin/ldid
+          chmod +x /tmp/ios-toolchain/bin/ldid
+
+      - name: Build TGLitePerf.dylib and .deb packages
+        run: |
+          chmod +x ./build.sh
+          SDK_PATH="/tmp/ios-toolchain/iPhoneOS16.5.sdk" \
+          LDID_BIN="/tmp/ios-toolchain/bin/ldid" \
+          OUT_DIR="$GITHUB_WORKSPACE/tweak-artifacts" \
+          ./build.sh
+
+      - name: Inject TGLitePerf.dylib into IPA (optional)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.ipa_url != '' }}
+        run: |
+          pip3 install --user --break-system-packages https://github.com/asdfzxcvbn/pyzule-rw/archive/main.zip || true
+          curl -fsSL -L "${{ inputs.ipa_url }}" -o /tmp/input.ipa
+          ~/.local/bin/cyan -i /tmp/input.ipa -o "$GITHUB_WORKSPACE/tweak-artifacts/Telegram-TGLitePerf.ipa" -f "$GITHUB_WORKSPACE/tweak-artifacts/TGLitePerf.dylib" --overwrite
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: TGLitePerf-${{ github.run_number }}
+          path: tweak-artifacts/*
+          if-no-files-found: error
+          retention-days: 30
